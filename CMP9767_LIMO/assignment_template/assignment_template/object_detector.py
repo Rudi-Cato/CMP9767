@@ -48,7 +48,7 @@ class ObjectDetector(Node):
 
 
 
-        self.tf_buffer = Buffer()     #(cache_time=rclpy.duration.Duration(seconds=20))
+        self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=20))
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.centroid_coordinates = []
         self.pothole_points = []
@@ -62,6 +62,7 @@ class ObjectDetector(Node):
         except Exception as e:
             self.get_logger().warning(f"Failed to lookup transform: {str(e)}")
             return None
+
 
     def camera_info_callback(self, data):
         if not self.camera_model:
@@ -110,8 +111,8 @@ class ObjectDetector(Node):
             self.centroid_coordinates.append((cX,cY))
 
            # Draw bounding box and centroid
-           # cv2.rectangle(image_color, (x, y), (x + w, y + h), (0, 255, 0), 2)
-           # cv2.circle(image_color, (cX, cY), 5, (0, 0, 255), -1)
+            #cv2.rectangle(image_color, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            #cv2.circle(image_color, (cX, cY), 5, (0, 0, 255), -1)
 
       
         for centroid in self.centroid_coordinates:
@@ -125,27 +126,32 @@ class ObjectDetector(Node):
                 image_depth.shape[1]/2 + (image_coords[1] - image_color.shape[1]/2)*self.color2depth_aspect)
         
         # get the depth reading at the centroid location
-            depth_value = image_depth[int(depth_coords[0]), int(depth_coords[1])]                     #
+            depth_value = image_depth[int(depth_coords[0]), int(depth_coords[1])]                     
+
+            if 0 < depth_value < 1.2:                                                                     # filter out depth anomolies
 
         # calculate object's 3d location in camera coords 
-            camera_coords = self.camera_model.projectPixelTo3dRay((image_coords[1], image_coords[0])) # project the image coords (x,y) into 3D ray in camera coords 
-            camera_coords = [x/camera_coords[2] for x in camera_coords]                               # adjust the resulting vector so that z = 1
-            camera_coords = [x*depth_value for x in camera_coords]                                    # multiply the vector by depth
+                camera_coords = self.camera_model.projectPixelTo3dRay((image_coords[1], image_coords[0])) # project the image coords (x,y) into 3D ray in camera coords 
+                camera_coords = [x/camera_coords[2] for x in camera_coords]                               # adjust the resulting vector so that z = 1
+                camera_coords = [x*depth_value for x in camera_coords]                                    # multiply the vector by depth
 
 
             
         #define a point in camera coordinates
             
-            object_location = PoseStamped()                                                           # take the pose of detected pothole for processing
-            object_location.header.frame_id = "depth_link"
-            object_location.pose.orientation.w = 1.0
-            object_location.pose.position.x = camera_coords[0]
-            object_location.pose.position.y = camera_coords[1]
-            object_location.pose.position.z = camera_coords[2]
+                object_location = PoseStamped()                                                           # take the pose of detected pothole for processing
+                object_location.header.frame_id = "depth_link"
+                object_location.pose.orientation.w = 1.0
+                object_location.pose.position.x = camera_coords[0]
+                object_location.pose.position.y = camera_coords[1]
+                object_location.pose.position.z = camera_coords[2]
 
-            
+            # Marker array for visualisation 
+            Markers = MarkerArray()
+            marker_id = 0
+            Markers.markers = []
             # Transform to the 'map' frame
-            transform_map = self.get_tf_transform('map', 'depth_link')                                # Transforming to the 'map' frame
+            transform_map = self.get_tf_transform('odom', 'depth_link')                                # Transforming to the 'map' frame
             if transform_map:
                 p_map = do_transform_pose(object_location.pose, transform_map)
                 self.pothole_points.append((p_map.position.x, p_map.position.y))                      # take the map points x & y
@@ -155,7 +161,7 @@ class ObjectDetector(Node):
                 points = np.array(self.pothole_points)                                                # create a numpy array for clustering
                 
                 # DBSCAN clustering       
-                dbscan = DBSCAN(eps=0.16, min_samples=2).fit(points)                                  # I use DBSCAN to cluster, this removes..
+                dbscan = DBSCAN(eps=0.132, min_samples=2).fit(points)                                 # I use DBSCAN to cluster, this removes..
                 labels = dbscan.labels_                                                               # ..duplicates and duplicates caused by drift
 
                 #print('x and y of potholes = ',labels)                                               # print if you want points
@@ -167,10 +173,10 @@ class ObjectDetector(Node):
 
 
 
-                # Marker array for visualisation 
-                Markers = MarkerArray()
-                marker_id = 0
-                Markers.markers = []                                                                  # clear list each run
+                                                                                  # clear list each run
+                
+
+
                 
                 # Calculating centroids for each cluster
                 for label in unique_labels:
@@ -208,7 +214,7 @@ class ObjectDetector(Node):
  
         
         #resize and adjust for visualisation
-        #image_color = cv2.resize(image_color, (0,0), fx=2, fy=2)                                     # Maybe i want to show camera image for comparison
+        #image_color = cv2.resize(image_color, (0,0), fx=0.8, fy=0.8)                                     # Maybe i want to show camera image for comparison
         #image_depth *= 1.0/10.0 # scale for visualisation (max range 10.0 m)
         
         #cv2.imshow("image color", image_color)
