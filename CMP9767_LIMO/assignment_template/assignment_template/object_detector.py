@@ -53,7 +53,18 @@ class ObjectDetector(Node):
         self.centroid_coordinates = []
         self.pothole_points = []
         self.clusters = 0
-    
+        #self.timer = self.create_timer(10.0, self.cluster_potholes)
+
+
+
+
+
+  #  def cluster_potholes(self):
+  #      if not self.pothole_points:
+  #          return
+        
+        
+        
 
     def get_tf_transform(self, target_frame, source_frame):
         try:
@@ -128,7 +139,7 @@ class ObjectDetector(Node):
         # get the depth reading at the centroid location
             depth_value = image_depth[int(depth_coords[0]), int(depth_coords[1])]                     
 
-            if 0 < depth_value < 1.2:                                                                     # filter out depth anomolies
+            if 0.1 < depth_value < 1.3:                                                                     # filter out depth anomolies
 
         # calculate object's 3d location in camera coords 
                 camera_coords = self.camera_model.projectPixelTo3dRay((image_coords[1], image_coords[0])) # project the image coords (x,y) into 3D ray in camera coords 
@@ -146,72 +157,69 @@ class ObjectDetector(Node):
                 object_location.pose.position.y = camera_coords[1]
                 object_location.pose.position.z = camera_coords[2]
 
-            # Marker array for visualisation 
-            Markers = MarkerArray()
-            marker_id = 0
-            Markers.markers = []
+            
             # Transform to the 'map' frame
-            transform_map = self.get_tf_transform('odom', 'depth_link')                                # Transforming to the 'map' frame
+            transform_map = self.get_tf_transform('map', 'depth_link')                                # Transforming to the 'map' frame
             if transform_map:
                 p_map = do_transform_pose(object_location.pose, transform_map)
                 self.pothole_points.append((p_map.position.x, p_map.position.y))                      # take the map points x & y
-            
-               # Extracting coordinates from PointStamped messages
-                
-                points = np.array(self.pothole_points)                                                # create a numpy array for clustering
+
+
+                if len(self.pothole_points)%5==0:
+
+
+                    # Extracting coordinates from PointStamped messages  
+                    points = np.array(self.pothole_points)                                                # create a numpy array for clustering
                 
                 # DBSCAN clustering       
-                dbscan = DBSCAN(eps=0.132, min_samples=2).fit(points)                                 # I use DBSCAN to cluster, this removes..
-                labels = dbscan.labels_                                                               # ..duplicates and duplicates caused by drift
+                    dbscan = DBSCAN(eps=0.095, min_samples=2).fit(points)                                 # I use DBSCAN to cluster, this removes..
+                    labels = dbscan.labels_                                                               # ..duplicates and duplicates caused by drift
 
-                #print('x and y of potholes = ',labels)                                               # print if you want points
+        #print('x and y of potholes = ',labels)                                               # print if you want points
 
-                self.clusters = len(set(labels)) - (1 if -1 in labels else 0)                         # find the length of the list (how many potholes)
+                    self.clusters = len(set(labels)) - (1 if -1 in labels else 0)                         # find the length of the list (how many potholes)
                
-                # Getting unique labels (excluding noise label -1)
-                unique_labels = set(labels) - {-1}                                                    # details of each element minus duplicates
+        # Getting unique labels (excluding noise label -1)
+                    unique_labels = set(labels) - {-1}                                                    # details of each element minus duplicates            
+        # Calculating centroids for each cluster
+                    Markers = MarkerArray()
+                    marker_id = 0
+                    Markers.markers = []
+                    for label in unique_labels:
+
+        # Filter points belonging to the current cluster
+                        cluster_points = points[labels == label]
+                        centroid_db = np.mean(cluster_points, axis=0)                                     # get the centroid of each cluster
+            # Marker array for visualisation 
+                        
+                        marker = Marker()
+                        marker.header.frame_id = 'map'
+                        marker.type = Marker.SPHERE                                                       # Marker shape in rviz
+                        marker.action = Marker.ADD
+                        marker.pose.orientation.w = 1.0
+                        marker.scale.x = 0.2                                                              # Marker size
+                        marker.scale.y = 0.2
+                        marker.scale.z = 0.2
+                        marker.color.a = 1.0                                                              # Alpha channel (transparency)
+                        marker.color.r = 1.0                                                              # Red color
+                        marker.color.g = 0.0
+                        marker.color.b = 0.0
 
 
-
-                                                                                  # clear list each run
+            #fill my marker array with estimated positions
+                        marker.id = marker_id
+                        marker.pose.position.x = centroid_db[0]
+                        marker.pose.position.y = centroid_db[1]
+                        marker.pose.position.z = 0.0                                                      # Assuming z = 0 for visualization
+                        Markers.markers.append(marker)
+                        marker_id += 1
+                        self._pothole_publisher_.publish(Markers)
                 
-
-
-                
-                # Calculating centroids for each cluster
-                for label in unique_labels:
-
-                # Filter points belonging to the current cluster
-                    cluster_points = points[labels == label]
-                    centroid_db = np.mean(cluster_points, axis=0)                                     # get the centroid of each cluster
-                    
-                    marker = Marker()
-                    marker.header.frame_id = 'map'
-                    marker.type = Marker.SPHERE                                                       # Marker shape in rviz
-                    marker.action = Marker.ADD
-                    marker.pose.orientation.w = 1.0
-                    marker.scale.x = 0.2                                                              # Marker size
-                    marker.scale.y = 0.2
-                    marker.scale.z = 0.2
-                    marker.color.a = 1.0                                                              # Alpha channel (transparency)
-                    marker.color.r = 1.0                                                              # Red color
-                    marker.color.g = 0.0
-                    marker.color.b = 0.0
-
-
-                    #fill my marker array with estimated positions
-                    marker.id = marker_id
-                    marker.pose.position.x = centroid_db[0]
-                    marker.pose.position.y = centroid_db[1]
-                    marker.pose.position.z = 0.0                                                      # Assuming z = 0 for visualization
-                    Markers.markers.append(marker)
-                    marker_id += 1
-                    self._pothole_publisher_.publish(Markers)
             
             else:
                 self.get_logger().warning("Transform between 'depth_link' and 'map' not available.")
         print('the number of potholes in this list is: = ', self.clusters)
- 
+        
         
         #resize and adjust for visualisation
         #image_color = cv2.resize(image_color, (0,0), fx=0.8, fy=0.8)                                     # Maybe i want to show camera image for comparison
@@ -231,3 +239,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
